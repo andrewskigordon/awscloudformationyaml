@@ -1,0 +1,139 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Create a basic VPC and launch an EC2 instance within it."
+
+
+Resources:
+  destroyherbackbone:
+    Type: "AWS::EC2::VPC"
+    Properties:
+      CidrBlock: "10.45.0.0/16"
+      EnableDnsSupport: "true"
+      EnableDnsHostnames: "true"
+      Tags:
+        - Key: "Name"
+          Value: "mashherbackbone"
+
+
+  MySubnet:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      VpcId: !Ref destroyherbackbone
+      CidrBlock: "10.45.1.0/24"
+      MapPublicIpOnLaunch: "true"
+      AvailabilityZone: us-east-1a [0, !GetAZs ""]
+      Tags:
+        - Key: "Name"
+          Value: "MySubnet"
+
+
+  MyInternetGateway:
+    Type: "AWS::EC2::InternetGateway"
+    Properties:
+      Tags:
+        - Key: "Name"
+          Value: "MyInternetGateway"
+
+
+  GatewayAttachment:
+    Type: "AWS::EC2::VPCGatewayAttachment"
+    Properties:
+      VpcId: !Ref destroyherbackbone
+      InternetGatewayId: !Ref MyInternetGateway
+
+
+  MyRouteTable:
+    Type: "AWS::EC2::RouteTable"
+    Properties:
+      VpcId: !Ref destroyherbackbone
+      Tags:
+        - Key: "Name"
+          Value: "MyRouteTable"
+
+
+  MyRoute:
+    Type: "AWS::EC2::Route"
+    DependsOn: "GatewayAttachment"
+    Properties:
+      RouteTableId: !Ref MyRouteTable
+      DestinationCidrBlock: "0.0.0.0/0"
+      GatewayId: !Ref MyInternetGateway
+
+
+  SubnetRouteTableAssociation:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Properties:
+      SubnetId: !Ref MySubnet
+      RouteTableId: !Ref MyRouteTable
+
+
+  MySecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: "Security group for EC2 instance to allow SSH and HTTP access"
+      VpcId: !Ref destroyherbackbone
+      SecurityGroupIngress:
+        - IpProtocol: "tcp"
+          FromPort: 22
+          ToPort: 22
+          CidrIp: "0.0.0.0/0"
+        - IpProtocol: "tcp"
+          FromPort: 80
+          ToPort: 80
+          CidrIp: "0.0.0.0/0"
+
+
+  MyEC2Instance:
+    Type: "AWS::EC2::Instance"
+    Properties:
+      ImageId: "ami-051f8a213df8bc089"
+      InstanceType: "t2.micro"
+      KeyName: "Seoul-Metro-374"
+      SubnetId: !Ref MySubnet
+      SecurityGroupIds:
+        - !Ref MySecurityGroup
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          yum install -y httpd
+          systemctl start httpd
+          systemctl enable httpd
+          # Fetch and store metadata
+          TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+          LOCAL_IPV4=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/local-ipv4)
+          AVAILABILITY_ZONE=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/placement/availability-zone)
+          MAC_ADDRESS=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/mac)
+          VPC_ID=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/network/interfaces/macs/$MAC_ADDRESS/vpc-id)
+          # Generate the HTML content
+          cat <<EOF > /var/www/html/index.html
+          <!doctype html>
+          <html lang="en" class="h-100">
+          <head>
+          <title>EC2 Instance Details</title>
+          </head>
+          <body>
+          <div>
+          <h1>Instance Details - its her mashed up back bone I broke two days ago</h1>
+          <p><strong>Instance Name:</strong> $(hostname -f)</p>
+          <p><strong>Instance Private IP Address:</strong> $LOCAL_IPV4</p>
+          <p><strong>Availability Zone:</strong> $AVAILABILITY_ZONE</p>
+          <p><strong>Virtual Private Cloud (VPC):</strong> $VPC_ID</p>
+          </div>
+          </body>
+          </html>
+          EOF
+
+
+Outputs:
+  VPCId:
+    Description: "ID of the new VPC"
+    Value: !Ref destroyherbackbone
+  PublicIP:
+    Description: "Public IP Address of the EC2 Instance"
+    Value: !GetAtt MyEC2Instance.PublicIp
+  PublicDNS:
+    Description: "Public DNS Name of the EC2 Instance"
+    Value: !GetAtt MyEC2Instance.PublicDnsName
+  InstanceId:
+    Description: "Instance ID of the EC2"
+    Value: !Ref MyEC2Instance
